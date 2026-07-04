@@ -15,14 +15,17 @@ datasource db {
 }
 
 model Video {
-  id String @id @default(cuid())
-  title String
-  storageKey String
-  mimeType String
-  size BigInt
+  id          String      @id @default(cuid())
+  title       String
+  storageKey  String
+  mimeType    String
+  size        BigInt
   videoStatus VideoStatus @default(UPLOADED)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([videoStatus])
+  @@index([createdAt])
 }
 
 enum VideoStatus {
