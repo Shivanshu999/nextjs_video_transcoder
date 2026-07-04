@@ -17,7 +17,7 @@ export default function UploadPage() {
 
     try {
       // Step 1: Ask backend for a presigned URL
-      const uploadRes = await fetch("/api/upload-url/route.ts", {
+      const uploadRes = await fetch("/api/upload-url", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -48,7 +48,7 @@ export default function UploadPage() {
       }
 
       // Step 3: Save metadata in PostgreSQL
-      const saveRes = await fetch("/api/videos/route.ts", {
+      const saveRes = await fetch("/api/videos", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
