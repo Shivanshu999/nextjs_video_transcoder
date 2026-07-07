@@ -1,10 +1,12 @@
 import { Worker } from "bullmq";
 import { connection } from "@/lib/queue";
+import { processVideo } from "./processor";
+
 
 new Worker(
   "video-processing",
   async (job) => {
-    console.log(`Processing video: ${job.data.videoId}`);
+    await processVideo(job.data);
   },
   {
     connection,

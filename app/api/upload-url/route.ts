@@ -1,4 +1,4 @@
-import { s3 } from "@/lib/s3";
+import { s3 } from "@/worker/s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
