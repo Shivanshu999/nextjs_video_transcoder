@@ -15,17 +15,18 @@ datasource db {
 }
 
 model Video {
-  id          String      @id @default(cuid())
-  title       String
-  storageKey  String
-  mimeType    String
-  size        BigInt
+  id           String      @id @default(cuid())
+  title        String
+  storageKey   String
+  mimeType     String
+  size         BigInt
   hlsPath      String?
   thumbnail    String?
   errorMessage String?
-  videoStatus VideoStatus @default(UPLOADED)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  duration     Int?        // seconds
+  videoStatus  VideoStatus @default(UPLOADED)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   @@index([videoStatus])
   @@index([createdAt])

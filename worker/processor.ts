@@ -1,27 +1,13 @@
 import path from "path";
-
 import { prisma } from "@/lib/prisma";
-
-import {
-  downloadFromS3,
-  uploadDirectoryToS3,
-  uploadFileToS3,
-} from "@/lib/s3";
-
-import {
-  createTempDirectory,
-  removeTempDirectory,
-} from "./temp";
-
+import { createTempDirectory, removeTempDirectory } from "./temp";
 import { transcodeToHLS } from "./ffmpeg";
 
 export interface VideoJobData {
   videoId: string;
 }
 
-export async function processVideo({
-  videoId,
-}: VideoJobData) {
+export async function processVideo({ videoId }: VideoJobData) {
   console.log(`🎬 Starting ${videoId}`);
 
   let tempDir = "";
@@ -60,33 +46,21 @@ export async function processVideo({
 
     tempDir = await createTempDirectory(videoId);
 
-    const inputPath = path.join(
-      tempDir,
-      "input.mp4"
-    );
+    const inputPath = path.join(tempDir, "input.mp4");
 
     // -------------------------
     // Download original
     // -------------------------
 
-    await downloadFromS3(
-      video.storageKey,
-      inputPath
-    );
+    await downloadFromS3(video.storageKey, inputPath);
 
     // -------------------------
     // Generate HLS + thumbnail + duration
     // -------------------------
 
-    const outputDir = path.join(
-      tempDir,
-      "output"
-    );
+    const outputDir = path.join(tempDir, "output");
 
-    const { duration } = await transcodeToHLS(
-      inputPath,
-      outputDir
-    );
+    const { duration } = await transcodeToHLS(inputPath, outputDir);
 
     // -------------------------
     // Upload HLS variants + master playlist
@@ -94,10 +68,7 @@ export async function processVideo({
 
     const hlsPrefix = `processed/${videoId}`;
 
-    await uploadDirectoryToS3(
-      outputDir,
-      hlsPrefix
-    );
+    await uploadDirectoryToS3(outputDir, hlsPrefix);
 
     // Note: generateThumbnail() writes thumbnail.jpg inside outputDir,
     // so uploadDirectoryToS3 above already uploaded it to
@@ -130,10 +101,7 @@ export async function processVideo({
       },
       data: {
         videoStatus: "FAILED",
-        errorMessage:
-          error instanceof Error
-            ? error.message
-            : "Unknown error",
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
       },
     });
   } finally {
