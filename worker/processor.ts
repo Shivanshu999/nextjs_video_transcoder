@@ -1,21 +1,140 @@
-// worker/processor.ts
+import path from "path";
+
+import { prisma } from "@/lib/prisma";
+
+import {
+  downloadFromS3,
+  uploadDirectoryToS3,
+} from "@/lib/s3";
+
+import {
+  createTempDirectory,
+  removeTempDirectory,
+} from "./temp";
+
+import { transcodeToHLS } from "./ffmpeg";
 
 export interface VideoJobData {
   videoId: string;
 }
 
-export async function processVideo(job: VideoJobData) {
-  console.log("🎬 Processing video:", job.videoId);
+export async function processVideo({
+  videoId,
+}: VideoJobData) {
+  console.log(`🎬 Starting ${videoId}`);
 
-  // Step 1: Fetch video metadata from database
+  let tempDir = "";
 
-  // Step 2: Download original video from S3
+  try {
+    // -------------------------
+    // Load video
+    // -------------------------
 
-  // Step 3: Transcode with FFmpeg
+    const video = await prisma.video.findUnique({
+      where: {
+        id: videoId,
+      },
+    });
 
-  // Step 4: Upload HLS files to S3
+    if (!video) {
+      throw new Error("Video not found.");
+    }
 
-  // Step 5: Update video status to READY
+    // -------------------------
+    // Update status
+    // -------------------------
 
-  console.log("✅ Finished processing:", job.videoId);
+    await prisma.video.update({
+      where: {
+        id: videoId,
+      },
+      data: {
+        videoStatus: "PROCESSING",
+      },
+    });
+
+    // -------------------------
+    // Temporary directory
+    // -------------------------
+
+    tempDir = await createTempDirectory(videoId);
+
+    const inputPath = path.join(
+      tempDir,
+      "input.mp4"
+    );
+
+    // -------------------------
+    // Download original
+    // -------------------------
+
+    await downloadFromS3(
+      video.storageKey,
+      inputPath
+    );
+
+    // -------------------------
+    // Generate HLS
+    // -------------------------
+
+    const outputDir = path.join(
+      tempDir,
+      "output"
+    );
+
+    await transcodeToHLS(
+      inputPath,
+      outputDir
+    );
+
+    // -------------------------
+    // Upload HLS
+    // -------------------------
+
+    const hlsPrefix = `processed/${videoId}`;
+
+    await uploadDirectoryToS3(
+      outputDir,
+      hlsPrefix
+    );
+
+    // -------------------------
+    // Update database
+    // -------------------------
+
+    await prisma.video.update({
+      where: {
+        id: videoId,
+      },
+      data: {
+        videoStatus: "READY",
+
+        // Add this field after updating Prisma
+        hlsPath: `${hlsPrefix}/master.m3u8`,
+      },
+    });
+
+    console.log("✅ Finished");
+  } catch (error) {
+    console.error(error);
+
+    await prisma.video.update({
+      where: {
+        id: videoId,
+      },
+      data: {
+        videoStatus: "FAILED",
+
+        // Add after updating Prisma
+        errorMessage:
+          error instanceof Error
+            ? error.message
+            : "Unknown error",
+      },
+    });
+  } finally {
+    if (tempDir) {
+      await removeTempDirectory(tempDir);
+    }
+  }
 }
