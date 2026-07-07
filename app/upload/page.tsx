@@ -33,7 +33,7 @@ export default function UploadPage() {
       }
 
       const { uploadUrl, storageKey } = await uploadRes.json();
-
+      console.log("Upload URL:", uploadUrl);
       // Step 2: Upload directly to S3
       const s3Res = await fetch(uploadUrl, {
         method: "PUT",

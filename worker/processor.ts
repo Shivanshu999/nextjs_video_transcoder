@@ -2,6 +2,10 @@ import path from "path";
 import { prisma } from "@/lib/prisma";
 import { createTempDirectory, removeTempDirectory } from "./temp";
 import { transcodeToHLS } from "./ffmpeg";
+import {
+  downloadFromS3,
+  uploadDirectoryToS3,
+} from "@/lib/s3";
 
 export interface VideoJobData {
   videoId: string;

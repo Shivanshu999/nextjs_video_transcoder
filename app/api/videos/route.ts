@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
       }
     );
 
-    return NextResponse.json(video, { status: 201 });
+    return NextResponse.json( {...video, size: video.size.toString()}, { status: 201 });
   } catch (error) {
     console.error(error);
 
