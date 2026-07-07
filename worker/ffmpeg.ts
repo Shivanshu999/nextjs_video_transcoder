@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
+import { promises as fsPromises } from "fs";
 
 export interface Variant {
   name: string;
@@ -70,6 +71,25 @@ export const HLS_VARIANTS: Variant[] = [
 
 const AUDIO_BITRATE = "128k";
 const SEGMENT_DURATION = 6;
+
+
+// ─────────────────────────────────────────────
+// Master playlist generation
+// ─────────────────────────────────────────────
+
+function buildMasterPlaylist(variants: Variant[]): string {
+  const lines = ["#EXTM3U", "#EXT-X-VERSION:3"];
+
+  for (const variant of variants) {
+    lines.push(
+      `#EXT-X-STREAM-INF:BANDWIDTH=${variant.bandwidth},RESOLUTION=${variant.width}x${variant.height}`
+    );
+    lines.push(`${variant.name}/index.m3u8`);
+  }
+
+  return lines.join("\n") + "\n";
+}
+
 
 async function ensureDirectory(dir: string) {
   await fs.mkdir(dir, {
@@ -365,4 +385,122 @@ export async function transcodeVariant(
       `Failed to generate playlist for ${variant.name}`
     );
   }
+}
+
+// ─────────────────────────────────────────────
+// Duration probing (requires ffprobe on PATH)
+// ─────────────────────────────────────────────
+
+export function getVideoDuration(inputFile: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const ffprobe = spawn("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      inputFile,
+    ]);
+
+    let stdout = "";
+    let stderr = "";
+
+    ffprobe.stdout.setEncoding("utf8");
+    ffprobe.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+
+    ffprobe.stderr.setEncoding("utf8");
+    ffprobe.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    ffprobe.on("error", reject);
+
+    ffprobe.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffprobe exited with code ${code}\n\n${stderr}`));
+        return;
+      }
+
+      const duration = parseFloat(stdout.trim());
+
+      if (Number.isNaN(duration)) {
+        reject(new Error(`Could not parse duration: "${stdout}"`));
+        return;
+      }
+
+      resolve(duration);
+    });
+  });
+}
+// ─────────────────────────────────────────────
+// Thumbnail generation
+// ─────────────────────────────────────────────
+
+export async function generateThumbnail(
+  inputFile: string,
+  outputDir: string,
+  atSeconds: number = 1
+): Promise<string> {
+  const thumbnailPath = path.join(outputDir, "thumbnail.jpg");
+
+  await runFFmpeg({
+    args: [
+      "-ss", String(atSeconds),
+      "-i", inputFile,
+      "-frames:v", "1",
+      "-q:v", "2",
+      thumbnailPath,
+    ],
+  });
+
+  const exists = await fileExists(thumbnailPath);
+
+  if (!exists) {
+    throw new Error("Failed to generate thumbnail");
+  }
+
+  return thumbnailPath;
+}
+
+// ─────────────────────────────────────────────
+// Full HLS transcode orchestrator
+// ─────────────────────────────────────────────
+
+export interface TranscodeResult {
+  masterPlaylistPath: string;
+  thumbnailPath: string;
+  duration: number;
+}
+
+export async function transcodeToHLS(
+  inputFile: string,
+  outputDir: string,
+  onProgress?: ProgressCallback
+): Promise<TranscodeResult> {
+  await prepareOutputDirectories(outputDir);
+
+  // Probe duration first — also fails fast if the file is invalid/corrupt
+  const duration = await getVideoDuration(inputFile);
+
+  // Transcode each variant sequentially.
+  // (Sequential keeps CPU/memory predictable; switch to Promise.all
+  // if your worker has cores/memory to spare and you want speed over stability.)
+  for (const variant of HLS_VARIANTS) {
+    await transcodeVariant(inputFile, outputDir, variant, onProgress);
+  }
+
+  // Write the master playlist referencing all variants
+  const masterPlaylistPath = path.join(outputDir, "master.m3u8");
+  const masterContent = buildMasterPlaylist(HLS_VARIANTS);
+  await fsPromises.writeFile(masterPlaylistPath, masterContent, "utf8");
+
+  // Generate a thumbnail from partway into the video (helps avoid black frames at t=0)
+  const thumbnailSeconds = duration > 2 ? Math.min(2, duration / 2) : 0;
+  const thumbnailPath = await generateThumbnail(inputFile, outputDir, thumbnailSeconds);
+
+  return {
+    masterPlaylistPath,
+    thumbnailPath,
+    duration,
+  };
 }

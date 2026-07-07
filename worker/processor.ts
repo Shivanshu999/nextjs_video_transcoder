@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import {
   downloadFromS3,
   uploadDirectoryToS3,
+  uploadFileToS3,
 } from "@/lib/s3";
 
 import {
@@ -74,7 +75,7 @@ export async function processVideo({
     );
 
     // -------------------------
-    // Generate HLS
+    // Generate HLS + thumbnail + duration
     // -------------------------
 
     const outputDir = path.join(
@@ -82,13 +83,13 @@ export async function processVideo({
       "output"
     );
 
-    await transcodeToHLS(
+    const { duration } = await transcodeToHLS(
       inputPath,
       outputDir
     );
 
     // -------------------------
-    // Upload HLS
+    // Upload HLS variants + master playlist
     // -------------------------
 
     const hlsPrefix = `processed/${videoId}`;
@@ -97,6 +98,11 @@ export async function processVideo({
       outputDir,
       hlsPrefix
     );
+
+    // Note: generateThumbnail() writes thumbnail.jpg inside outputDir,
+    // so uploadDirectoryToS3 above already uploaded it to
+    // `${hlsPrefix}/thumbnail.jpg`. No separate upload call needed —
+    // uploadFileToS3 import above can be removed unless you use it elsewhere.
 
     // -------------------------
     // Update database
@@ -108,9 +114,9 @@ export async function processVideo({
       },
       data: {
         videoStatus: "READY",
-
-        // Add this field after updating Prisma
         hlsPath: `${hlsPrefix}/master.m3u8`,
+        thumbnail: `${hlsPrefix}/thumbnail.jpg`,
+        duration: Math.round(duration),
       },
     });
 
@@ -124,8 +130,6 @@ export async function processVideo({
       },
       data: {
         videoStatus: "FAILED",
-
-        // Add after updating Prisma
         errorMessage:
           error instanceof Error
             ? error.message
