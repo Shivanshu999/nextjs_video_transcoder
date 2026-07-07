@@ -1,4 +1,4 @@
-import ffmpeg from "fluent-ffmpeg";
+import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 
@@ -6,9 +6,9 @@ export interface Variant {
   name: string;
   width: number;
   height: number;
-  bitrate: string;
-  maxrate: string;
-  bufsize: string;
+  videoBitrate: string;
+  maxRate: string;
+  bufferSize: string;
   bandwidth: number;
 }
 
@@ -17,48 +17,59 @@ export interface HLSResult {
   variants: Variant[];
 }
 
-export interface ProgressCallback {
-  (percent: number): void;
+export interface ProgressInfo {
+  frame?: number;
+  fps?: number;
+  bitrate?: string;
+  speed?: string;
+  percent?: number;
 }
+
+export type ProgressCallback = (
+  progress: ProgressInfo
+) => void;
 
 export const HLS_VARIANTS: Variant[] = [
   {
     name: "1080p",
     width: 1920,
     height: 1080,
-    bitrate: "5000k",
-    maxrate: "5350k",
-    bufsize: "7500k",
+    videoBitrate: "5000k",
+    maxRate: "5350k",
+    bufferSize: "7500k",
     bandwidth: 5500000,
   },
   {
     name: "720p",
     width: 1280,
     height: 720,
-    bitrate: "2800k",
-    maxrate: "2996k",
-    bufsize: "4200k",
+    videoBitrate: "2800k",
+    maxRate: "2996k",
+    bufferSize: "4200k",
     bandwidth: 3000000,
   },
   {
     name: "480p",
     width: 854,
     height: 480,
-    bitrate: "1400k",
-    maxrate: "1498k",
-    bufsize: "2100k",
+    videoBitrate: "1400k",
+    maxRate: "1498k",
+    bufferSize: "2100k",
     bandwidth: 1500000,
   },
   {
     name: "360p",
     width: 640,
     height: 360,
-    bitrate: "800k",
-    maxrate: "856k",
-    bufsize: "1200k",
+    videoBitrate: "800k",
+    maxRate: "856k",
+    bufferSize: "1200k",
     bandwidth: 900000,
   },
 ];
+
+const AUDIO_BITRATE = "128k";
+const SEGMENT_DURATION = 6;
 
 async function ensureDirectory(dir: string) {
   await fs.mkdir(dir, {
@@ -66,14 +77,29 @@ async function ensureDirectory(dir: string) {
   });
 }
 
-function variantDirectory(
+export async function prepareOutputDirectories(
+  outputDir: string
+) {
+  await ensureDirectory(outputDir);
+
+  for (const variant of HLS_VARIANTS) {
+    await ensureDirectory(
+      path.join(outputDir, variant.name)
+    );
+  }
+}
+
+export function variantDirectory(
   outputDir: string,
   variant: Variant
 ) {
-  return path.join(outputDir, variant.name);
+  return path.join(
+    outputDir,
+    variant.name
+  );
 }
 
-function playlistPath(
+export function playlistPath(
   outputDir: string,
   variant: Variant
 ) {
@@ -83,7 +109,7 @@ function playlistPath(
   );
 }
 
-function segmentPattern(
+export function segmentPattern(
   outputDir: string,
   variant: Variant
 ) {
@@ -93,14 +119,250 @@ function segmentPattern(
   );
 }
 
-async function prepareDirectories(
-  outputDir: string
-) {
-  await ensureDirectory(outputDir);
+function parseProgress(
+  line: string
+): ProgressInfo | null {
+  if (!line.includes("frame=")) {
+    return null;
+  }
 
-  for (const variant of HLS_VARIANTS) {
-    await ensureDirectory(
-      variantDirectory(outputDir, variant)
+  const frame =
+    /frame=\s*(\d+)/.exec(line)?.[1];
+
+  const fps =
+    /fps=\s*([\d.]+)/.exec(line)?.[1];
+
+  const bitrate =
+    /bitrate=\s*([^\s]+)/.exec(line)?.[1];
+
+  const speed =
+    /speed=\s*([^\s]+)/.exec(line)?.[1];
+
+  return {
+    frame: frame ? Number(frame) : undefined,
+    fps: fps ? Number(fps) : undefined,
+    bitrate,
+    speed,
+  };
+}
+
+interface FFmpegOptions {
+  args: string[];
+  onProgress?: ProgressCallback;
+}
+
+export function runFFmpeg({
+  args,
+  onProgress,
+}: FFmpegOptions): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn(
+      "ffmpeg",
+      [
+        "-hide_banner",
+        "-y",
+        ...args,
+      ],
+      {
+        stdio: [
+          "ignore",
+          "ignore",
+          "pipe",
+        ],
+      }
+    );
+
+    let stderr = "";
+
+    ffmpeg.stderr.setEncoding("utf8");
+
+    ffmpeg.stderr.on(
+      "data",
+      (chunk: string) => {
+        stderr += chunk;
+
+        const lines = chunk
+          .split("\n")
+          .filter(Boolean);
+
+        for (const line of lines) {
+          const progress =
+            parseProgress(line);
+
+          if (
+            progress &&
+            onProgress
+          ) {
+            onProgress(progress);
+          }
+        }
+      }
+    );
+
+    ffmpeg.on(
+      "error",
+      reject
+    );
+
+    ffmpeg.on(
+      "close",
+      (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+
+        reject(
+          new Error(
+            `FFmpeg exited with code ${code}\n\n${stderr}`
+          )
+        );
+      }
+    );
+  });
+}
+
+export async function fileExists(
+  file: string
+) {
+  try {
+    await fs.access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export {
+  AUDIO_BITRATE,
+  SEGMENT_DURATION,
+};
+
+
+/**
+ * Encode a single HLS variant.
+ *
+ * Example output:
+ *
+ * output/
+ *   720p/
+ *      index.m3u8
+ *      segment_000.ts
+ *      segment_001.ts
+ *      ...
+ */
+export async function transcodeVariant(
+  inputFile: string,
+  outputDir: string,
+  variant: Variant,
+  onProgress?: ProgressCallback
+): Promise<void> {
+  const playlist = playlistPath(outputDir, variant);
+
+  const segments = segmentPattern(
+    outputDir,
+    variant
+  );
+
+  const scaleFilter =
+    `scale=w=${variant.width}:h=${variant.height}:` +
+    `force_original_aspect_ratio=decrease,` +
+    `pad=${variant.width}:${variant.height}:(ow-iw)/2:(oh-ih)/2`;
+
+  await runFFmpeg({
+    onProgress,
+
+    args: [
+      "-i",
+      inputFile,
+
+      // -----------------------------
+      // Video
+      // -----------------------------
+      "-map",
+      "0:v:0",
+
+      "-c:v",
+      "libx264",
+
+      "-preset",
+      "medium",
+
+      "-profile:v",
+      "main",
+
+      "-pix_fmt",
+      "yuv420p",
+
+      "-vf",
+      scaleFilter,
+
+      "-b:v",
+      variant.videoBitrate,
+
+      "-maxrate",
+      variant.maxRate,
+
+      "-bufsize",
+      variant.bufferSize,
+
+      "-g",
+      "48",
+
+      "-keyint_min",
+      "48",
+
+      "-sc_threshold",
+      "0",
+
+      // -----------------------------
+      // Audio
+      // -----------------------------
+      "-map",
+      "0:a?",
+
+      "-c:a",
+      "aac",
+
+      "-b:a",
+      AUDIO_BITRATE,
+
+      "-ac",
+      "2",
+
+      "-ar",
+      "48000",
+
+      // -----------------------------
+      // HLS
+      // -----------------------------
+      "-f",
+      "hls",
+
+      "-hls_time",
+      String(SEGMENT_DURATION),
+
+      "-hls_playlist_type",
+      "vod",
+
+      "-hls_flags",
+      "independent_segments",
+
+      "-hls_segment_type",
+      "mpegts",
+
+      "-hls_segment_filename",
+      segments,
+
+      playlist,
+    ],
+  });
+
+  const exists = await fileExists(playlist);
+
+  if (!exists) {
+    throw new Error(
+      `Failed to generate playlist for ${variant.name}`
     );
   }
 }
