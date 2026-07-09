@@ -8,7 +8,6 @@ CREATE TABLE "Video" (
     "storageKey" TEXT NOT NULL,
     "mimeType" TEXT NOT NULL,
     "size" BIGINT NOT NULL,
-    ""
     "videoStatus" "VideoStatus" NOT NULL DEFAULT 'UPLOADED',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
