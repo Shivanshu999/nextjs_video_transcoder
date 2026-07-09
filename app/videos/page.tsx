@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import Link from "next/link";
 
 function formatBytes(bytes: bigint) {
   const value = Number(bytes);
@@ -38,6 +39,7 @@ export default async function VideosPage() {
                 <th className="px-4 py-3 text-left">Type</th>
                 <th className="px-4 py-3 text-left">Size</th>
                 <th className="px-4 py-3 text-left">Uploaded</th>
+                <th className="px-4 py-3 text-left">Action</th>
               </tr>
             </thead>
 
@@ -67,6 +69,21 @@ export default async function VideosPage() {
 
                   <td className="px-4 py-3">
                     {video.createdAt.toLocaleString()}
+                  </td>
+
+                  <td className="px-4 py-3">
+                    {video.videoStatus === "READY" ? (
+                      <Link
+                        href={`/videos/${video.id}`}
+                        className="rounded bg-black px-3 py-1.5 text-sm text-white hover:bg-zinc-800"
+                      >
+                        Watch
+                      </Link>
+                    ) : (
+                      <span className="text-sm text-gray-400">
+                        {video.videoStatus === "FAILED" ? "Failed" : "Processing…"}
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
