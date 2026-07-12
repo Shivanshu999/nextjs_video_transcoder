@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { VideoPlayer } from "@/app/components/video-player";
+import { VideoPlayer } from "@/components/video-player";
 import { notFound } from "next/navigation";
 
 export default async function WatchPage({
